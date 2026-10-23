@@ -62,6 +62,8 @@ final class SpotifyLyricsStore: ObservableObject {
     }
     @Published private(set) var lyrics: SpotifyLyrics?
     @Published private(set) var loading = false
+    /// LRCLIB couldn't be reached for this track: not a verdict, it is asked again.
+    @Published private(set) var failed = false
 
     private var cache: [String: SpotifyLyrics] = [:]
     private var cacheOrder: [String] = []
@@ -94,6 +96,7 @@ final class SpotifyLyricsStore: ObservableObject {
             return
         }
         lyrics = cache[track.id]
+        failed = false
         if showing { load() }
     }
 
@@ -109,15 +112,22 @@ final class SpotifyLyricsStore: ObservableObject {
         loadingId = track.id
         lyrics = nil
         loading = true
+        failed = false
         let id = track.id
         Task {
             let found = await Self.fetch(title: track.title, artist: track.artist,
                                          album: track.album, duration: track.duration)
             if loadingId == id { loadingId = nil; loading = false }
-            // A network failure is not a verdict: try again next time
-            guard let found else { return }
+            guard SpotifyController.shared.track?.id == id else { return }
+            guard let found else {
+                // A network failure is not a verdict: ask again in a moment, same song only
+                failed = true
+                try? await Task.sleep(for: .seconds(20))
+                if showing, failed, SpotifyController.shared.track?.id == id { load() }
+                return
+            }
             cache(found, for: id)
-            if SpotifyController.shared.track?.id == id { lyrics = found }
+            lyrics = found
         }
     }
 
@@ -139,7 +149,8 @@ final class SpotifyLyricsStore: ObservableObject {
         let syncedLyrics: String?
     }
 
-    /// Exact match first (LRCLIB allows ±2 s on the duration), then a search. nil on network failure.
+    /// Exact match first (LRCLIB allows ±2 s on the duration), then a search.
+    /// nil only when LRCLIB couldn't be reached at all.
     nonisolated private static func fetch(title: String, artist: String, album: String,
                                           duration: Double) async -> SpotifyLyrics? {
         var get = URLComponents(string: "https://lrclib.net/api/get")!
@@ -151,14 +162,14 @@ final class SpotifyLyricsStore: ObservableObject {
         ]
         // Plain lyrics only: a search may still find a synced copy
         var plain: SpotifyLyrics?
-        switch await request(get.url!) {
-        case .failure: return nil
-        case .success(let data):
-            if let data, let record = try? JSONDecoder().decode(Record.self, from: data),
-               let lyrics = lyrics(from: record) {
-                if lyrics != .unsynced { return lyrics }
-                plain = lyrics
-            }
+        // A failed exact match is no reason to stop: LRCLIB answers 503 to a song it is
+        // looking up for the first time, while the search already has it.
+        let exact = await requestTwice(get.url!)
+        if case .success(let data) = exact,
+           let data, let record = try? JSONDecoder().decode(Record.self, from: data),
+           let lyrics = lyrics(from: record) {
+            if lyrics != .unsynced { return lyrics }
+            plain = lyrics
         }
 
         var search = URLComponents(string: "https://lrclib.net/api/search")!
@@ -166,7 +177,10 @@ final class SpotifyLyricsStore: ObservableObject {
             URLQueryItem(name: "track_name", value: title),
             URLQueryItem(name: "artist_name", value: artist),
         ]
-        guard case .success(let data) = await request(search.url!) else { return plain }
+        guard case .success(let data) = await requestTwice(search.url!) else {
+            if case .failure = exact { return nil }
+            return plain
+        }
         let records = data.flatMap { try? JSONDecoder().decode([Record].self, from: $0) } ?? []
         // Same song only: a duration far off is another version
         let close = records.filter { abs(($0.duration ?? 0) - duration) <= 3 || duration <= 0 }
@@ -184,6 +198,14 @@ final class SpotifyLyricsStore: ObservableObject {
         }
         if record.plainLyrics?.isEmpty == false { return .unsynced }
         return nil
+    }
+
+    /// One more try after a moment when the first one fails (503 while LRCLIB warms up).
+    nonisolated private static func requestTwice(_ url: URL) async -> Result<Data?, Error> {
+        let first = await request(url)
+        guard case .failure = first else { return first }
+        try? await Task.sleep(for: .milliseconds(1500))
+        return await request(url)
     }
 
     /// success(nil) is a 404: LRCLIB answered, it just doesn't know the song.
