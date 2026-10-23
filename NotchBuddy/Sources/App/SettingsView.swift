@@ -91,6 +91,8 @@ struct SettingsView: View {
     @State private var deepseekKey: String = KeychainStore.shared.get("deepseek-api-key") ?? ""
     @State private var qwenKey: String     = KeychainStore.shared.get("qwen-api-key") ?? ""
     @State private var moonshotKey: String = KeychainStore.shared.get("moonshot-api-key") ?? ""
+    @State private var omnirouteURL: String = AppState.shared.omnirouteServerURL
+    @State private var omnirouteKey: String = KeychainStore.shared.get("omniroute-api-key") ?? ""
     @State private var ollamaURL:    String = AppState.shared.ollamaServerURL
     @State private var lmstudioURL:  String = AppState.shared.lmstudioServerURL
     @State private var connectingOllama:    Bool = false
@@ -1152,6 +1154,27 @@ struct SettingsView: View {
                     statusMessage = String(localized: "status.moonshot-key-saved")
                 }
                 .buttonStyle(.borderedProminent)
+
+                Divider()
+
+                // OmniRoute: a self-hosted OpenAI-compatible gateway. Its URL with the key.
+                HStack(spacing: 8) {
+                    Circle().fill(Color(hex: ChatProvider.omniroute.accentHex)).frame(width: 8, height: 8)
+                    Text(verbatim: "OmniRoute").font(.system(size: 12, weight: .semibold))
+                }
+                TextField("https://omniroute.example.com/v1", text: $omnirouteURL)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("API key", text: $omnirouteKey)
+                    .textFieldStyle(.roundedBorder)
+                Button(String(localized: "Save")) {
+                    state.omnirouteServerURL = omnirouteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                    KeychainStore.shared.set("omniroute-api-key", value: omnirouteKey)
+                    // New gateway or key: the model list is read again
+                    state.fetchedProviderModels[.omniroute] = nil
+                    state.providerModelFetchError[.omniroute] = nil
+                    statusMessage = String(localized: "status.omniroute-saved")
+                }
+                .buttonStyle(.borderedProminent)
             }
             .padding(.vertical, 4)
         }
@@ -2203,6 +2226,9 @@ struct SettingsView: View {
                 if let provider = ChatProvider(pillID: def.id), provider.isLocal {
                     let url = provider == .ollama ? state.ollamaServerURL : state.lmstudioServerURL
                     if url.isEmpty { return String(localized: "Not connected") }
+                } else if def.id == "ai_omniroute" {
+                    if state.omnirouteServerURL.isEmpty { return String(localized: "Not connected") }
+                    if KeychainStore.shared.get("omniroute-api-key") == nil { return String(localized: "Key not configured") }
                 } else {
                     let keyId = def.id == "ai_anthropic" ? "anthropic-api-key"
                                : def.id == "ai_google"    ? "google-api-key" : "openai-api-key"
