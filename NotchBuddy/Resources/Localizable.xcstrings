@@ -75892,6 +75892,22 @@
           }
         }
       }
+    },
+    "https://omniroute.example.com/v1" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "https://omniroute.example.com/v1"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "https://omniroute.example.com/v1"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
