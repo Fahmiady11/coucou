@@ -1,0 +1,71 @@
+name: Fork build (installable Coucou)
+
+# Builds Coucou from this fork's main and publishes it as the rolling
+# "fork-latest" release, for scripts/install-fork.sh. Ad-hoc signed: it runs on
+# the Mac that installs it, it is not notarized and never goes to anyone else.
+# Runs only in the fork, never in Louis-CFM/coucou.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository != 'Louis-CFM/coucou'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: cd NotchBuddy && xcodegen
+
+      - name: Build Release (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NotchBuddy/NotchBuddy.xcodeproj \
+            -scheme NotchBuddy \
+            -configuration Release \
+            -derivedDataPath build \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO 2>&1 | tee build.log || {
+              grep -E "error:" build.log | sort -u | head -30 | sed 's/^/::error::/'
+              exit 1
+            }
+
+      - name: Sign ad-hoc and zip
+        run: |
+          APP=build/Build/Products/Release/Coucou.app
+          codesign --force --deep --sign - \
+            --entitlements NotchBuddy/Resources/Coucou.entitlements "$APP"
+          codesign --verify --deep --strict "$APP"
+          ditto -c -k --keepParent "$APP" Coucou.zip
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist" > version.txt
+
+      - name: Publish the fork-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(cat version.txt)
+          NOTES="Coucou $VERSION built from ${GITHUB_SHA::7} on main. Install: bash scripts/install-fork.sh"
+          git tag -f fork-latest "$GITHUB_SHA"
+          git push -f origin refs/tags/fork-latest
+          if gh release view fork-latest >/dev/null 2>&1; then
+            gh release edit fork-latest --title "Coucou $VERSION (fork, ${GITHUB_SHA::7})" --notes "$NOTES"
+            gh release upload fork-latest Coucou.zip --clobber
+          else
+            gh release create fork-latest Coucou.zip --prerelease \
+              --title "Coucou $VERSION (fork, ${GITHUB_SHA::7})" --notes "$NOTES"
+          fi
