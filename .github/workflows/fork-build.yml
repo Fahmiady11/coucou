@@ -30,7 +30,10 @@ jobs:
       - name: Generate project
         run: cd NotchBuddy && xcodegen
 
-      - name: Build Release (unsigned)
+      # Without PHONE_LINK: the iPhone sync needs iCloud, which only Louis's
+      # Developer ID profile grants. Built with it and signed ad-hoc, CloudKit
+      # stops Coucou at launch.
+      - name: Build Release (unsigned, no iPhone link)
         run: |
           set -o pipefail
           xcodebuild \
@@ -40,7 +43,8 @@ jobs:
             -derivedDataPath build \
             build \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO 2>&1 | tee build.log || {
+            CODE_SIGNING_REQUIRED=NO \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS="" 2>&1 | tee build.log || {
               grep -E "error:" build.log | sort -u | head -30 | sed 's/^/::error::/'
               exit 1
             }
