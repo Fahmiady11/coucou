@@ -186,7 +186,8 @@ struct SpotifyCardView: View {
                 lyricsMessage(String(localized: "spotify.lyrics.not-found"))
             case nil:
                 lyricsMessage(lyricsStore.loading ? String(localized: "spotify.lyrics.loading")
-                                                  : String(localized: "spotify.lyrics.not-found"))
+                              : lyricsStore.failed ? String(localized: "spotify.lyrics.unreachable")
+                              : String(localized: "spotify.lyrics.not-found"))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
